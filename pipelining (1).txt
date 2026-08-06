@@ -1,0 +1,681 @@
+module instruction_memory(input reset,
+                          input [31:0]address,
+                          output [31:0]instruction);
+  
+  reg [31:0]mem[1023:0];//instruction memory
+  
+  assign instruction = reset ? 32'h0000000 : mem [address[31:2]];
+  
+endmodule
+// register file
+
+module register_file (
+    input [4:0] register_read_1,
+    input [4:0] register_read_2,
+    input [4:0] write_register,
+    input [31:0] write_data,
+    input rwrite,
+    input clk,
+    input reset,
+    output [31:0] read_data_1,
+    output [31:0] read_data_2
+);
+
+    // Array of 32 registers, each 32 bits wide
+    reg [31:0] registers [31:0];
+  
+  
+
+    // Continuous assignments for asynchronous reads
+    assign read_data_1 = reset ? 32'h00000000 : register_read_1 == 5'b00000 ? 32'h00000000 : registers[register_read_1];
+    assign read_data_2 = reset ? 32'h00000000 : register_read_2 == 5'b00000 ? 32'h00000000 : registers[register_read_2];
+
+    // Synchronous write logic on clock edge
+    always @(posedge clk) begin
+      if (rwrite && (write_register != 5'b0)) begin
+            registers[write_register] <= write_data;
+        end
+      else
+        registers[0] <= 32'h00000000;
+      
+    end
+
+endmodule
+
+// data memory
+
+module datamemory(input [31:0]address,
+                  input [31:0]write_data,
+                  input dmread,clk,dmwrite,
+                  output [31:0]read_data);
+  
+  reg [31:0]memory[1023:0];  //data memory
+  assign read_data = dmread? memory[address[31:2]] : 32'h0000000;
+  
+  always@(posedge clk)
+    begin
+      if(dmwrite)
+        memory[address[31:2]] <= write_data;
+    end
+  
+endmodule
+
+
+
+// program counter 
+module program_counter(input [31:0]pc_next,
+                       input clk,reset,halt,
+                       output reg [31:0]pc);
+  always@(posedge clk)
+    begin 
+      if(reset)
+        pc <= 32'b0000000;
+      else if(!halt)
+        pc <= pc_next;
+    end
+endmodule
+
+// pc_adder\
+module pc_adder(input [31:0]pc_address,
+                output [31:0] pc_plus_4);
+  
+  assign pc_plus_4 = pc_address + 32'd4;
+  
+endmodule
+
+// module control unit 
+module control_unit(
+     input [6:0] opcode,
+     output reg rwrite,
+     output reg memtoreg,
+     output reg alusrc,
+     output reg branch,
+     output reg jump,
+     output reg dmwrite,
+     output reg dmread,
+     output reg halt,
+  output reg [1:0] aluop
+);
+
+always @(*) begin
+
+    // SAFE DEFAULTS 
+    rwrite   = 1'b0;
+    memtoreg = 1'b0;
+    alusrc   = 1'b0;
+    branch   = 1'b0;
+    jump     = 1'b0;
+    dmwrite  = 1'b0;
+    dmread   = 1'b0;
+    aluop    = 2'b00;
+    halt     = 0;
+
+    case(opcode)
+
+        // ---------------- R-type ----------------
+        7'b0110011: begin
+            rwrite = 1'b1;
+            alusrc   = 1'b0;
+            aluop    = 2'b10;
+        end
+
+        // ---------------- I-type (ADDI etc.) ----------------
+        7'b0010011: begin
+            rwrite = 1'b1;
+            alusrc   = 1'b1;
+            aluop    = 2'b10;
+        end
+
+        // ---------------- LOAD (LW) ----------------
+        7'b0000011: begin
+            rwrite = 1'b1;
+            memtoreg = 1'b1;
+            alusrc   = 1'b1;
+            dmread = 1'b1;
+            aluop    = 2'b00;
+        end
+
+        // ---------------- STORE (SW) ----------------
+        7'b0100011: begin
+            alusrc   = 1'b1;
+            dmwrite = 1'b1;
+            aluop    = 2'b00;
+        end
+
+        // ---------------- BRANCH (BEQ) ----------------
+        7'b1100011: begin
+            branch = 1'b1;
+            aluop  = 2'b01;
+        end
+
+        // ---------------- JAL ----------------
+       7'b1101111: begin
+          rwrite = 1'b1;
+          jump   = 1'b1;
+          alusrc = 1'b1;
+          aluop  = 2'b00;
+      end
+      
+      7'b1111111 : halt = 1'b1;
+      default : begin
+        rwrite   = 1'b0;
+        memtoreg = 1'b0;
+        alusrc   = 1'b0;
+        branch   = 1'b0;
+        jump     = 1'b0;
+        dmwrite  = 1'b0;
+        dmread   = 1'b0;
+        aluop    = 2'b00;
+        halt     = 1'b0;
+      end
+
+    endcase
+end
+
+endmodule
+
+// sign extension 
+module sign_extension(
+    input [31:0] instruction,
+    output reg [31:0] output32
+);
+
+always @(*) begin
+    output32 = 32'h000000;
+    case (instruction[6:0])
+        // S-type (store)
+       
+        7'b0100011: begin
+            output32 = {{20{instruction[31]}},
+                         instruction[31:25],
+                         instruction[11:7]};
+        end
+
+        
+        // I-type (load, ALU immediates)
+     
+        7'b0000011,
+        7'b0010011: begin
+            output32 = {{20{instruction[31]}},
+                         instruction[31:20]};
+        end
+
+       
+        // B-type (branch)
+        
+        7'b1100011: begin
+            output32 = {{19{instruction[31]}},
+                         instruction[31],
+                         instruction[7],
+                         instruction[30:25],
+                         instruction[11:8],
+                         1'b0};
+        end
+
+        
+        // J-type (JAL)
+      
+        7'b1101111: begin
+            output32 = {{11{instruction[31]}},
+                         instruction[31],
+                         instruction[19:12],
+                         instruction[20],
+                         instruction[30:21],
+                         1'b0};
+        end
+
+        default: begin
+        end
+
+    endcase
+end
+
+endmodule
+// alu control datapath
+module alu_control(
+  input [1:0]aluop,
+  input [2:0]func3,
+  input func7,
+  output reg[3:0]aluoperation
+);
+  
+  always@(*)begin 
+    case(aluop)
+      2'b00 : aluoperation = 4'b0000;
+      2'b01 : aluoperation = 4'b0001;
+      2'b10:begin 
+        case(func3)
+          3'b000  : aluoperation = (func7) ? 4'b0001 : 4'b0000; // SUB : ADD
+          3'b001  : aluoperation = 4'b0010;                           // SLL
+          3'b010  : aluoperation = 4'b0011;                           // SLT
+          3'b011  : aluoperation = 4'b0100;                           // SLTU
+          3'b100  : aluoperation = 4'b0101;                           // XOR
+          3'b101  : aluoperation = (func7) ? 4'b0111 : 4'b0110; // SRA : SRL
+          3'b110  : aluoperation = 4'b1000;                           // OR
+          3'b111  : aluoperation = 4'b1001;                           // AND
+          default : aluoperation = 4'b1111;
+        endcase
+      end
+      default : aluoperation = 4'b1111;
+    endcase
+  end
+endmodule
+
+module alu_unit(input [31:0]A,
+                input [31:0]B,
+                input [3:0]aluoperation,
+                output reg zero,
+                output reg LT,
+                output reg LTU,
+                output reg[31:0]result);
+  
+  always@(*)
+    begin
+      zero = A==B;
+      LT = $signed(A)<$signed(B);
+      LTU = A<B;
+      case(aluoperation)
+        4'b0000 : result = A + B;// add
+        4'b0001 : result = A - B;//sub
+        4'b0010 : result = A << B[4:0];// SLL;
+        4'b0011 : result =  ($signed(A) < $signed(B)) ? 32'b1 : 32'b0;//SLTS
+        4'b0100 : result = (A < B) ? 32'b1 : 32'b0;// SLT
+        4'b0101 : result = A ^ B;// xor
+        4'b0110 : result = A >> B[4:0];// SRL
+        4'b0111 : result = $signed(A) >>> B[4:0];// SRA
+        4'b1000 : result = A | B; // or
+        4'b1001 : result = A & B;//and
+        default: begin
+                result = 0;
+            end
+      endcase
+      
+    end
+endmodule
+
+
+
+  
+
+// instruction fetch 
+
+module instruction_fetch(
+  input clk,
+  input reset,
+  input halt,
+  input branch,
+  input jump,
+  input flag,
+  input [31:0]offset,
+  output [31:0]instruction,
+  output [31:0]pc_plus_4);
+  
+  wire [31:0]a_pc_address,pc;
+  wire [31:0]BJTA;
+  wire branch_taken;
+  
+  
+  program_counter PC(
+    .pc_next(a_pc_address),
+    .clk(clk),
+    .reset(reset),
+    .halt(halt),
+    .pc(pc));
+  
+  pc_adder add4(
+    .pc_address(pc),
+    .pc_plus_4(pc_plus_4));
+  
+  instruction_memory IM(
+    .reset(reset),
+    .address(pc),
+    .instruction(instruction));
+  
+  assign BJTA = pc + offset;
+  assign branch_taken = branch & flag;
+  
+  assign a_pc_address = branch_taken || jump ? BJTA : pc_plus_4;
+  
+endmodule
+
+// instruction decoder 
+
+module instruction_decoder(
+  input [31:0]instruction,
+  input clk,reset,
+  output alusrc,
+  output rwrite,
+  output memtoreg,
+  output branch,
+  output jump,
+  output dmwrite,
+  output dmread,
+  output halt,
+  output [1:0]aluop,
+  output [2:0]func3,
+  output func7,
+  output [4:0]rd,
+  output [31:0]read_data_1,
+  output [31:0]read_data_2,
+  output [31:0]immediate
+);
+  
+  
+  
+  control_unit CU(
+    .opcode(instruction[6:0]),
+    .rwrite(rwrite),
+    .memtoreg(memtoreg),
+    .alusrc(alusrc),
+    .branch(branch),
+    .jump(jump),
+    .dmwrite(dmwrite),
+    .dmread(dmread),
+    .halt(halt),
+    .aluop(aluop)
+  );
+  assign func3 = instruction[14:12];
+  assign func7 = instruction[30];
+  assign rd = instruction[11:7];
+  
+  register_file RF(
+    .register_read_1(instruction[19:15]),
+    .register_read_2(instruction[24:20]),
+    .write_register(5'b00000),
+    .write_data(32'h00000000),
+    .rwrite(1'b0),
+    .clk(clk),
+    .reset(reset),
+    .read_data_1(read_data_1),
+    .read_data_2(read_data_2)
+  );
+  sign_extension SE(
+    .instruction(instruction),
+    .output32(immediate)
+  );
+endmodule
+// instruction execute 
+module instruction_execute(
+  input [1:0]aluop,
+  input [2:0]func3,
+  input func7,
+  input [31:0]A,
+  input [31:0]B,
+  input [31:0]immediate,
+  input alusrc,
+  output reg flag,
+  output [31:0]result);
+  
+  wire [31:0]data;
+  wire [3:0]aluoperation;
+  wire zero,LT,LTU;
+  
+  alu_control AC(
+    .aluop(aluop),
+    .func3(func3),
+    .func7(func7),
+    .aluoperation(aluoperation)
+  );
+  
+  assign data = alusrc ? immediate : B;
+  
+  alu_unit AU(
+    .A(A),
+    .B(data),
+    .aluoperation(aluoperation),
+    .zero(zero),
+    .LT(LT),
+    .LTU(LTU),
+    .result(result)
+  );
+  
+  always @(*) begin
+    case (func3)
+        3'b000: flag = zero;    // BEQ
+        3'b001: flag = ~zero;   // BNE
+        3'b100: flag = LT;      // BLT
+        3'b101: flag = ~LT;     // BGE
+        3'b110: flag = LTU;     // BLTU
+        3'b111: flag = ~LTU;    // BGEU
+        default: flag = 1'b0;
+    endcase
+end
+ 
+endmodule
+  
+// mem stage 
+
+  
+  
+
+  
+  
+  
+         
+  
+
+  
+module risc_v_pipelining(input clk,
+                         input reset);
+  wire halt,branch,jump,flag;
+  wire [31:0]instruction,pc_plus_4;
+  reg[31:0]offset;
+  
+  wire alusrc,rwrite,memtoreg,dmwrite,dmread;
+  wire [1:0]aluop;
+  wire [2:0]func3;
+  wire func7;
+  wire [4:0]rd;
+  wire [31:0]read_data_1,read_data_2,immediate;
+  
+  reg [31:0]p_instruction,p_pc_plus_4;
+  
+   
+  reg palusrc,prwrite,pmemtoreg,pbranch,pjump,pdmwrite,pdmread,phalt;
+  reg [1:0]paluop;
+  reg [2:0]pfunc3;
+  reg pfunc7;
+  reg [4:0]prd;
+  reg [31:0]pread_data_1,pread_data_2,pimmediate,ppc_plus_4;
+  
+  wire [31:0]result,data;
+  reg pflag;
+  reg ppmemtoreg,ppdmwrite,ppdmread,ppwrite;
+  reg [4:0]pprd;
+  reg [31:0]pppc_plus_4,ppread_data_2,pdata,presult;
+  
+  wire [31:0]read_data;
+  
+  reg pppwrite,pppmemtoreg,pppdmwrite,pppdmread;
+  reg [4:0]ppprd;
+  reg [31:0]ppppc_plus_4;
+  
+  
+  instruction_fetch IF(
+    .clk(clk),
+    .reset(reset),
+    .branch(pbranch),
+    .halt(phalt),
+    .jump(pjump),
+    .flag(pflag),
+    .offset(offset),
+    .instruction(instruction),
+    .pc_plus_4(pc_plus_4));
+
+
+
+always@(posedge clk)
+  begin
+    if(reset)
+      begin 
+        p_instruction <= 32'b0000000;
+        p_pc_plus_4   <= 32'b0000000;
+      end
+    else
+      begin
+        p_instruction <= instruction;
+        p_pc_plus_4   <= pc_plus_4;
+      end
+  end
+  
+  
+  instruction_decoder ID(
+    .instruction(p_instruction),
+    .clk(clk),
+    .reset(reset),
+    .alusrc(alusrc),
+    .rwrite(rwrite),
+    .memtoreg(memtoreg),
+    .branch(branch),
+    .jump(jump),
+    .dmwrite(dmwrite),
+    .dmread(dmread),
+    .halt(halt),
+    .aluop(aluop),
+    .func3(func3),
+    .func7(func7),
+    .rd(rd),
+    .read_data_1(read_data_1),
+    .read_data_2(read_data_2),
+    .immediate(immediate)
+  );
+  
+ 
+  
+  always@(posedge clk)
+    begin
+      if(reset)
+        begin
+          prwrite      <= 1'b0; 
+          pmemtoreg    <= 1'b0;
+          palusrc      <= 1'b0;
+          pbranch      <= 1'b0;
+          pjump        <= 1'b0;
+          pdmwrite     <= 1'b0;
+          pdmread      <= 1'b0;
+          paluop       <= 2'b00;
+          phalt        <= 1'b0;
+          pfunc3       <= 3'b000; // Added explicit reset for clarity
+          pfunc7       <= 1'b0;   // Added explicit reset for clarity
+          prd          <= 5'b00000;
+          pread_data_1 <= 32'h0000000;
+          pread_data_2 <= 32'h0000000;
+          pimmediate   <= 32'h0000000;
+          ppc_plus_4   <= 32'h0000000;
+        end
+      
+      else
+        begin
+          prwrite      <= rwrite; 
+          pmemtoreg    <= memtoreg;
+          palusrc      <= alusrc;
+          pbranch      <= branch;
+          pjump        <= jump;
+          pdmwrite     <= dmwrite;
+          pdmread      <= dmread;
+          paluop       <= aluop;
+          phalt        <= halt;
+          pfunc3       <= func3;
+          pfunc7       <= func7;
+          prd          <= rd;
+          pread_data_1 <= read_data_1;
+          pread_data_2 <= read_data_2;
+          pimmediate   <= immediate;
+          ppc_plus_4   <= p_pc_plus_4;
+        end
+    end
+  
+  instruction_execute IE(
+    .aluop(paluop),
+    .func3(pfunc3),
+    .func7(pfunc7),
+    .A(pread_data_1),
+    .B(pread_data_2),
+    .immediate(pimmediate),
+    .alusrc(palusrc),
+    .flag(flag),//////////////
+    .result(result),
+  );
+   
+  always@(posedge clk)
+    begin 
+      if(reset)
+        begin
+          ppwrite       <= 1'b0;
+          ppmemtoreg    <= 1'b0;
+          ppdmwrite     <= 1'b0;
+          ppdmread      <= 1'b0;
+          pphalt        <= 1'b0;
+          pprd          <= 5'b00000;
+          pppc_plus_4   <= 32'h0000000;
+          ppread_data_2 <= 32'h0000000;
+        end
+      else
+        begin
+          ppwrite       <= prwrite;
+          pflag         <= flag;
+          offset        <= result;
+          ppmemtoreg    <= pmemtoreg;
+          ppdmwrite     <= pdmwrite;
+          ppdmread      <= pdmread;
+          pprd          <= prd;
+          pppc_plus_4   <= ppc_plus_4;
+          ppread_data_2 <= pread_data_2;
+          presult<=result;
+        end
+      end
+      
+  datamemory DM(
+    .address(presult),
+    .write_data(ppread_data_2),
+    .dmread(ppdmread),
+    .dmwrite(ppdmwrite),
+    .clk(clk),
+    .read_data(read_data)
+  );
+  
+  always@(posedge clk)
+    begin 
+      if(reset)
+        begin
+          pppwrite <= 1'b0;
+          pppmemtoreg <= 1'b0;
+          pppdmwrite <= 1'b0;
+          pppdmread  <= 1'b0;
+          ppprd <= 5'b0;
+          ppppc_plus_4 <= 32'h000000;
+          
+        end
+      else
+        begin
+          pppwrite <= ppwrite;
+          pppmemtoreg <= ppmemtoreg;
+          pppdmwrite <= ppdmwrite;
+          pppdmread <= ppdmread;
+          ppprd <= pprd;
+          ppppc_plus_4 <= pppc_plus_4;
+        end
+    end
+  
+      
+          
+          
+endmodule
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+
