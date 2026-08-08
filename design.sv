@@ -27,7 +27,7 @@ module register_file (
     reg [31:0] registers [31:0];
     integer i;
 
-    // FIX: Internal bypass/forwarding allows same-cycle write-to-read without stale data
+    
     assign read_data_1 = reset ? 32'h00000000 : 
                          (register_read_1 == 5'b00000) ? 32'h00000000 : 
                          (rwrite && (write_register == register_read_1)) ? write_data : 
@@ -40,7 +40,7 @@ module register_file (
 
     always @(posedge clk) begin
         if (reset) begin
-            // FIX: Initialize all registers to 0 on reset to prevent 'x' propagation
+            
             for (i = 0; i < 32; i = i + 1) begin
                 registers[i] <= 32'h00000000;
             end
@@ -79,7 +79,7 @@ module program_counter(
     always @(posedge clk) begin 
         if (reset)
             pc <= 32'h00000000; 
-        else if (!halt && !stall) // FIX: Freeze PC on Load-Use Stall
+        else if (!halt && !stall) 
             pc <= pc_next;
     end
 endmodule
@@ -300,13 +300,13 @@ module risc_v_pipelining(
     assign id_rs1 = id_instruction[19:15];
     assign id_rs2 = id_instruction[24:20];
 
-    // FIX: Stall 1 cycle when EX stage is a Load (LW) and destination matches ID source
+   
     assign stall = ex_dmread && (ex_rd != 5'b00000) && ((ex_rd == id_rs1) || (ex_rd == id_rs2));
 
     // ---------------------------------------------------------
     // IF Stage Logic
     // ---------------------------------------------------------
-    // FIX: Guard branch evaluation against 'x' conditions
+    
     assign branch_taken = ((ex_branch === 1'b1) && (ex_flag === 1'b1)) || (ex_jump === 1'b1);
     assign pc_next = (branch_taken === 1'b1) ? target_pc : pc_plus_4;
 
@@ -511,7 +511,7 @@ module risc_v_pipelining(
             mem_jump        <= 1'b0;
         end else begin
             mem_alu_result  <= alu_result;
-            mem_read_data_2 <= forward_b_data; // FIX: Forwarded data for Store (SW) instructions
+            mem_read_data_2 <= forward_b_data; 
             mem_pc_plus_4   <= ex_pc_plus_4;
             mem_rd          <= ex_rd;
             mem_rwrite      <= ex_rwrite;
