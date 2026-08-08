@@ -12,10 +12,8 @@ module tb_risc_v_pipelining();
         .reset(reset)
     );
   initial begin
-    // Use "dump.vcd" for EDA Playground (or custom name for local GTKWave)
-    $dumpfile("dump.vcd"); 
-    
-    // Pass 0 instead of 1 to record ALL internal registers, ALU, and CPU signals
+   
+    $dumpfile("dump.vcd");
     $dumpvars(0, tb_risc_v_pipelining); 
 end
 
